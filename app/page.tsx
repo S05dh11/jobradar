@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { AgentEvent, JobRecord, RadarReport } from "./lib/types";
-import { CITIES, CREDIBILITY_LABEL, JOB_CATEGORIES, JOB_TYPES, type JobType } from "./lib/config";
+import { CITIES, CREDIBILITY_LABEL, JOB_CATEGORIES, JOB_TYPES, SURVEY_DEPTHS, type JobType, type SurveyDepth } from "./lib/config";
 import JobMap from "./JobMap";
 import RadarMap from "./RadarMap";
 
@@ -93,6 +93,7 @@ export default function Home() {
   const [selCats, setSelCats] = useState<string[]>([...JOB_CATEGORIES]);
   const [selCities, setSelCities] = useState<string[]>([]); // 默认不勾选:勾哪些城市查哪些
   const [jobType, setJobType] = useState<JobType>("fulltime");
+  const [depth, setDepth] = useState<SurveyDepth>("standard");
   const [events, setEvents] = useState<TEvent[]>([]);
   const [jobs, setJobs] = useState<JobRecord[]>([]);
   const [report, setReport] = useState<RadarReport | null>(null);
@@ -149,7 +150,7 @@ export default function Home() {
       const res = await fetch("/api/radar", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ categories: selCats, cities: selCities, jobType }),
+        body: JSON.stringify({ categories: selCats, cities: selCities, jobType, depth }),
         signal: ac.signal,
       });
       if (!res.ok || !res.body) {
@@ -220,6 +221,8 @@ export default function Home() {
             selCats={selCats}
             selCities={selCities}
             jobType={jobType}
+            depth={depth}
+            onDepth={(v) => setDepth(v)}
             onToggleCat={(v) => toggle(selCats, setSelCats, v)}
             onToggleCity={(v) => toggle(selCities, setSelCities, v)}
             onSelectAllCities={() => setSelCities([...CITIES])}
@@ -278,11 +281,13 @@ function ConfigPanel(props: {
   selCats: string[];
   selCities: string[];
   jobType: JobType;
+  depth: SurveyDepth;
   onToggleCat: (v: string) => void;
   onToggleCity: (v: string) => void;
   onSelectAllCities: () => void;
   onClearCities: () => void;
   onJobType: (v: JobType) => void;
+  onDepth: (v: SurveyDepth) => void;
   onStart: () => void;
 }) {
   return (
@@ -344,7 +349,30 @@ function ConfigPanel(props: {
         </p>
       </section>
 
-      <div className="boot-panel flex flex-col items-center gap-3 pt-2" style={{ animationDelay: "270ms" }}>
+      <section className="panel boot-panel p-5" style={{ animationDelay: "225ms" }}>
+        <h2 className="mb-4 text-base font-semibold text-ink-hi">④ 调研深度</h2>
+        <div className="flex flex-wrap gap-2">
+          {SURVEY_DEPTHS.map((d) => (
+            <button
+              key={d.value}
+              onClick={() => props.onDepth(d.value)}
+              className={
+                "rounded-[3px] border px-4 py-1.5 text-sm transition-colors " +
+                (props.depth === d.value
+                  ? "chip-on border-cyan-400/60"
+                  : "border-white/10 bg-white/[0.02] text-ink-mid hover:border-white/25 hover:text-ink-hi")
+              }
+            >
+              {d.label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-ink-dim">
+          快速省配额(小跑摸行情),标准够日常,深度多搜多抓(小选区也保 12 次搜索,耗时与配额都涨)
+        </p>
+      </section>
+
+      <div className="boot-panel flex flex-col items-center gap-3 pt-2" style={{ animationDelay: "340ms" }}>
         <button
           onClick={props.onStart}
           disabled={!props.selCats.length || !props.selCities.length}
@@ -354,7 +382,7 @@ function ConfigPanel(props: {
           开始调研
         </button>
         <p className="text-xs text-ink-dim">
-          已选 {props.selCats.length} 类岗位 × {props.selCities.length} 个城市 · 约 3-15 分钟,模型自行规划搜索与抓取
+          已选 {props.selCats.length} 类岗位 × {props.selCities.length} 个城市 · 约 3-40 分钟(视深度而定),模型自行规划搜索与抓取
         </p>
       </div>
     </div>

@@ -3,7 +3,7 @@
 // 每个事件一行 data: {JSON},前端流式渲染 agent 的每一步动作
 
 import { runRadarAgent } from "../../lib/agent";
-import { CITIES, JOB_CATEGORIES, JOB_TYPES, type JobType } from "../../lib/config";
+import { CITIES, JOB_CATEGORIES, JOB_TYPES, SURVEY_DEPTHS, type JobType, type SurveyDepth } from "../../lib/config";
 import type { AgentEvent } from "../../lib/types";
 
 export const runtime = "nodejs";
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 const TIMEOUT_MS = 45 * 60 * 1000; // 单次调研最长 45 分钟(预算 36 搜满载 + 限流退避的余量)
 
 export async function POST(req: Request) {
-  let body: { categories?: unknown; cities?: unknown; jobType?: unknown };
+  let body: { categories?: unknown; cities?: unknown; jobType?: unknown; depth?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -24,6 +24,9 @@ export async function POST(req: Request) {
   const jobType = (JOB_TYPES.some((t) => t.value === body.jobType)
     ? (body.jobType as JobType)
     : "fulltime") as JobType;
+  const depth: SurveyDepth = SURVEY_DEPTHS.some((d) => d.value === body.depth)
+    ? (body.depth as SurveyDepth)
+    : "standard";
   if (!categories.length || !cities.length) {
     return jsonErr(400, "请至少选择一个岗位类别和一个城市");
   }
@@ -54,7 +57,7 @@ export async function POST(req: Request) {
         }
       }, 15000);
       try {
-        const report = await runRadarAgent({ categories, cities, jobType }, send, signal);
+        const report = await runRadarAgent({ categories, cities, jobType, depth }, send, signal);
         send({ type: "done", report });
       } catch (e: any) {
         send({

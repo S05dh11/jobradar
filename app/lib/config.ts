@@ -115,3 +115,12 @@ export const CREDIBILITY_COLOR: Record<string, string> = {
   medium: "amber",
   low: "zinc",
 };
+
+// 调研深度(配置页单选;按档位缩放搜索/抓取预算)
+export const SURVEY_DEPTHS = [
+  { value: "light", label: "快速" },
+  { value: "standard", label: "标准" },
+  { value: "deep", label: "深度" },
+] as const;
+
+export type SurveyDepth = (typeof SURVEY_DEPTHS)[number]["value"];

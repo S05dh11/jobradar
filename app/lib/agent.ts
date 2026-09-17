@@ -12,6 +12,7 @@ import {
   TARGET_JOBS_MAX,
   TARGET_JOBS_MIN,
   type JobType,
+  type SurveyDepth,
 } from "./config";
 import type { AgentEvent, JobRecord, RadarReport, SkillCount } from "./types";
 
@@ -19,6 +20,7 @@ export interface RadarParams {
   categories: string[];
   cities: string[];
   jobType: JobType;
+  depth?: SurveyDepth; // 调研深度档位,缺省 standard
 }
 
 // ---------- 系统提示词(调过行为的根,逐字规格,改动需重新评估线上表现) ----------
@@ -75,16 +77,26 @@ interface Budget {
   targetMax: number;
 }
 
-// 预算随「类别 × 城市」组合数缩放,防小范围调研被无限拖长:
-// 满量组合时贴住全局上限(36 搜 / 20 抓 / 30-50 岗);
-// 小选区下限 8 搜 / 4 抓 / 目标 6-10 岗:两三个城市也要有深度,约 8-12 分钟出报告。
+// 预算随「类别 × 城市」组合数 × 深度档位缩放:
+// 满量组合贴住全局上限(36 搜 / 20 抓 / 30-50 岗);
+// 小选区各档下限——快速 4搜/2抓/3-6岗(省配额),标准 8搜/4抓/6-10岗,深度 12搜/6抓/10-15岗。
+const DEPTH_SCALE: Record<SurveyDepth, number> = { light: 0.55, standard: 0.9, deep: 1.6 };
+const DEPTH_FLOOR: Record<SurveyDepth, Budget> = {
+  light: { maxSearches: 4, maxFetches: 2, targetMin: 3, targetMax: 6 },
+  standard: { maxSearches: 8, maxFetches: 4, targetMin: 6, targetMax: 10 },
+  deep: { maxSearches: 12, maxFetches: 6, targetMin: 10, targetMax: 15 },
+};
+
 function dynamicBudget(params: RadarParams): Budget {
   const combos = Math.max(1, params.categories.length * params.cities.length);
+  const depth = params.depth ?? "standard";
+  const s = DEPTH_SCALE[depth];
+  const floor = DEPTH_FLOOR[depth];
   return {
-    maxSearches: clamp(Math.ceil(combos * 0.9), 8, MAX_SEARCHES),
-    maxFetches: clamp(Math.ceil(combos * 0.5), 4, MAX_FETCHES),
-    targetMin: clamp(Math.ceil(combos * 0.6), 6, TARGET_JOBS_MIN),
-    targetMax: clamp(Math.ceil(combos * 1.2), 10, TARGET_JOBS_MAX),
+    maxSearches: clamp(Math.ceil(combos * 0.9 * s), floor.maxSearches, MAX_SEARCHES),
+    maxFetches: clamp(Math.ceil(combos * 0.5 * s), floor.maxFetches, MAX_FETCHES),
+    targetMin: clamp(Math.ceil(combos * 0.6 * s), floor.targetMin, TARGET_JOBS_MIN),
+    targetMax: clamp(Math.ceil(combos * 1.2 * s), floor.targetMax, TARGET_JOBS_MAX),
   };
 }
 
