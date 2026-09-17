@@ -84,7 +84,7 @@ const DEPTH_SCALE: Record<SurveyDepth, number> = { light: 0.55, standard: 0.9, d
 const DEPTH_FLOOR: Record<SurveyDepth, Budget> = {
   light: { maxSearches: 4, maxFetches: 2, targetMin: 3, targetMax: 6 },
   standard: { maxSearches: 8, maxFetches: 4, targetMin: 6, targetMax: 10 },
-  deep: { maxSearches: 12, maxFetches: 6, targetMin: 10, targetMax: 15 },
+  deep: { maxSearches: 12, maxFetches: 8, targetMin: 10, targetMax: 15 },
 };
 
 function dynamicBudget(params: RadarParams): Budget {
@@ -283,7 +283,9 @@ export async function runRadarAgent(
   try {
     for (let iter = 0; iter < MAX_ITERATIONS && !state.finished; iter++) {
       const iterStart = Date.now();
-      const res = await chatCompletion(messages, TOOL_DEFS, signal);
+      const res = await chatCompletion(messages, TOOL_DEFS, signal, (text) =>
+        onEvent({ type: "note", text })
+      );
       console.log(
         `[agent] iter=${iter + 1}/${MAX_ITERATIONS} 模型${((Date.now() - iterStart) / 1000).toFixed(1)}s tools=${res.toolCalls.length} 搜=${state.searchCount} 抓=${state.fetchCount} 岗=${state.jobs.length}`
       );

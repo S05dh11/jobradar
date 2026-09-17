@@ -91,7 +91,8 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 export async function chatCompletion(
   messages: ChatMessage[],
   tools: ToolDef[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onNote?: (text: string) => void
 ): Promise<ChatResult> {
   const body = JSON.stringify({
     model: MODEL,
@@ -107,7 +108,10 @@ export async function chatCompletion(
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt++) {
     await chatPacedSlot();
-    if (attempt > 0) await sleep(BACKOFF_MS[attempt - 1], signal);
+    if (attempt > 0) {
+      onNote?.(`模型接口限流/超时,退避 ${Math.round(BACKOFF_MS[attempt - 1] / 1000)}s 后第 ${attempt + 1} 次尝试`);
+      await sleep(BACKOFF_MS[attempt - 1], signal);
+    }
     let res: Response;
     try {
       res = await fetch(`${ARK_BASE}/chat/completions`, {

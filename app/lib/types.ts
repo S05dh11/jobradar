@@ -64,5 +64,6 @@ export type AgentEvent =
       error?: string;
     }
   | { type: "job"; job: JobRecord }
+  | { type: "note"; text: string }
   | { type: "done"; report: RadarReport }
   | { type: "error"; message: string };

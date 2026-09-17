@@ -535,6 +535,18 @@ function TimelineItem({ ev }: { ev: TEvent }) {
       </div>
     );
   }
+  if (ev.type === "note") {
+    return (
+      <div className="relative mb-3">
+        <Node tone={NODE_TONES.plan} />
+        <p className="text-sm text-amber-200/80">
+          {ts}
+          ⚠ {ev.text}
+          <span className="text-ink-dim"> · 不是卡死,自动重试中</span>
+        </p>
+      </div>
+    );
+  }
   if (ev.type === "fetch") {
     return (
       <div className="relative mb-3">
