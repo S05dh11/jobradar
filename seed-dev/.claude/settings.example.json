@@ -1,0 +1,7 @@
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://ark.cn-beijing.volces.com/api/plan",
+    "ANTHROPIC_AUTH_TOKEN": "your-agent-plan-key",
+    "ANTHROPIC_MODEL": "doubao-seed-evolving"
+  }
+}

@@ -1,0 +1,32 @@
+"doubao-seed-evolving" is not a model this version of Claude Code recognizes, so auto-compact will keep this session within 200k tokens (the context window it assumes). If the model accepts more, append [1m] to the model name for 1M, or set CLAUDE_CODE_MAX_CONTEXT_TOKENS to its real window; to make it recognized, map it in the modelOverrides setting or update Claude Code; CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1 restores the previous wait-for-the-API behavior.
+[claude-code:unrecognized_model] {"model":"doubao-seed-evolving","query_source":"sdk"}
+模块一 lib 基础层全量重写已交付。
+
+## 交付摘要
+
+**重写 7 个文件**（`app/lib/`），`diagnose.ts` 与两个 route、全部 UI 一行未动，无新依赖：
+
+| 文件 | 要点 |
+|---|---|
+| `types.ts` (68) | 全部字段名/可选性/事件联合保持 |
+| `config.ts` (117) | 36 城名单与 GCJ-02 坐标逐字保留 |
+| `ark.ts` (101) | 空 tools 整段省略 tools/tool_choice；tool_calls 解析加数组判定 |
+| `model.ts` (37) | chatVision 多模态无工具 |
+| `search.ts` (109) | `Result.WebResults` 新结构 + `Results` 旧结构双兼容 |
+| `fetch-page.ts` (160) | SSRF/20s 软超时/3MB 封顶/GBK 回退/6000 字截断 |
+| `agent.ts` (530) | SYSTEM_PROMPT 逐字；预算公式/四工具/闭环/abort 兜底/buildSkillRanking 导出 |
+
+**验收门禁（最终代码连跑）**：
+1. `diag-offline-test.mjs` — **39/39 全绿**
+2. `npx tsc --noEmit` — 零错误
+3. `npm run build` — 通过（两 API 为 ƒ Dynamic）
+4. 全程 mock fetch，零真实模型/搜索调用
+
+**额外零联网自测**（`seed-dev/_verify/`，仓库外）：SYSTEM_PROMPT 与坐标表用独立转写逐字比对 12 项全绿；自写 66 条契约断言覆盖离线测试不碰的 dynamicBudget、登记去重/城市闸/默认值、abort 截断报告、搜索预算闸与双结构、SSRF 护栏、词频排序等，全绿。
+
+**三个需要你知悉的取舍**（开发记录第五节有详述）：
+1. 任务书 search 行写的 `authInfoLevel` 是上游字段名，TS 归一化字段按 types 契约保持 `authLevel`；
+2. `publishTime` 缺失时由空串改为 `undefined`（类型本就声明可选，回执显示「未知」），是唯一的可观察行为差异，如要逐字节复刻可秒回退；
+3. 搜索回执「还剩 N 次」偏松 1 次的参考实现怪癖刻意保留（硬闸正确），未擅自修。
+
+开发记录：`F:\——文章撰写——\火山\seed-dev\开发记录-重写1-lib层.md`。

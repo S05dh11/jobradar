@@ -1,0 +1,51 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# 测试产物/截图(测试图、UI 截图、运行日志,不进 git)
+/scripts/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# --- 开源前安全处理(2026-09-17) ---
+!.env.example
+.codewhale/
+dev.log
+# seed-dev 会话配置含真实 Key,仓库里只放脱敏模板
+seed-dev/.claude/settings.json

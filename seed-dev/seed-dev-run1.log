@@ -1,0 +1,41 @@
+"doubao-seed-evolving" is not a model this version of Claude Code recognizes, so auto-compact will keep this session within 200k tokens (the context window it assumes). If the model accepts more, append [1m] to the model name for 1M, or set CLAUDE_CODE_MAX_CONTEXT_TOKENS to its real window; to make it recognized, map it in the modelOverrides setting or update Claude Code; CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1 restores the previous wait-for-the-API behavior.
+[claude-code:unrecognized_model] {"model":"doubao-seed-evolving","query_source":"sdk"}
+我已读完任务书、AGENTS.md 和全部相关代码（`diagnose/route.ts`、`model.ts`、`ark.ts`、`search.ts`、`agent.ts`、`page.tsx`、两个路由、config、ui-test/diag-test 脚本），也查了 node_modules 里的 Next 16 Route Handlers 文档（与现有写法一致，无坑）。动手前有 3 个设计岔路需要你拍板（任务书没完全锁死）：
+
+**1. 判断轮的过程状态如何到达前端？** 任务书要求状态行「提取简历中 → 分析中（可含『补搜 N 次』）→ 完成」，且补搜次数要是真实的。两种理解：
+- **（推荐，A）改成 SSE**，与现有 `/api/radar` 同一模式：推送 `stage`/`search`/`retry`/`done`/`error` 事件，`done` 事件里携带任务书规定的外层 JSON（字段完全不变）。实时性真实，文章素材也好；代价是 `/api/diagnose` 协议从一次性 JSON 变为 event-stream（消费方只有 page.tsx 和 diag-test.mjs，我一并改）。
+- （B）保留一次性 JSON，前端只显示不确定的阶段动画（「补搜 N 次」要等全部结束才显示，过程中是假的）。
+
+**2. `gaps[]` 的线格式**：旧契约是 `string[]`，任务书要求每条带 evidence。
+- **（推荐）改为对象数组** `{skill, evidence, url?}`，`hit` 同理扩成 `{skill, rank, evidence, url?}`，`target` 加 `evidence/url?`。所谓「向后兼容」我理解为**外层五个键不变**（唯一消费方就是我们自己的前端，同步改）。
+- 或者 gaps 保留字符串、evidence 另开平行数组——怪，不推荐。
+
+**3. 段 3 JSON 解析失败后的「整体重试」会重跑段 2**，极端情况下两次尝试最多烧 6 次搜索配额（段 1 失败则在搜索前重试，零损耗）。任务书字面就是「整体重试」，我倾向照做并在开发记录里标注这个风险；若你介意配额，可以改成「段 2 对话记录保留、只重试段 3」（不算整体重试，最多再烧 0 次搜索）。
+
+我的默认选择是 **1A + 2 对象数组 + 3 严格按任务书整体重试**。确认或修正后我就开工。
+"doubao-seed-evolving" is not a model this version of Claude Code recognizes, so auto-compact will keep this session within 200k tokens (the context window it assumes). If the model accepts more, append [1m] to the model name for 1M, or set CLAUDE_CODE_MAX_CONTEXT_TOKENS to its real window; to make it recognized, map it in the modelOverrides setting or update Claude Code; CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1 restores the previous wait-for-the-API behavior.
+[claude-code:unrecognized_model] {"model":"doubao-seed-evolving","query_source":"sdk"}
+开发完成，全部验收项通过。
+
+## 交付摘要
+
+**协议**：`POST /api/diagnose` 改为 SSE，事件 `stage / search / retry / done / error`；done.report 外层五键不变，hit/gaps/target 每条带 `evidence`（resume/market_pool/search，search 附真实 url），新增 `searches[]` 与 `stages{extractMs,agentMs}`。
+
+**改动文件**（jobradar）：
+- `app/lib/diagnose.ts`（新）— 三段式核心：视觉提取 → search_market 工具循环（硬预算 3 次、6 轮）→ 结论清洗组装
+- `app/api/diagnose/route.ts`（重写）— 段 1 开流前完成（双失败真 502 带原文片段），段 2/3 走 SSE，240s 超时 + 15s 心跳
+- `app/lib/ark.ts`（1 处）— 空工具数组时省略 tools/tool_choice，段 3 重问在协议层封死搜索
+- `app/page.tsx`（局部）— SSE 消费、真实计数状态行（提取简历中 → 分析中·补搜 N 次）、四区块证据标签（📷图/📊岗位池/🔍搜索可点）、补搜记录与实测耗时
+- `scripts/diag-test.mjs`（适配 SSE）+ `scripts/diag-offline-test.mjs`（新，零真实调用）
+
+**按拍板执行的关键决策**：段 1 失败整体重试 1 次（零搜索损耗）；段 3 失败保留段 2 完整对话、无工具重问 1 次（不可能再烧配额）；`searches[]` 服务端按真实执行生成，search 证据 url 必须命中工具真实返回（编造链接剥离）；extracted 服务端回填。
+
+**自测结果**：
+- `npm run build` ✅（最终代码状态重跑通过）；`npx tsc --noEmit` ✅
+- 离线测试 **8 场景 39 断言全绿**（零搜索直通/补搜/预算封顶/两段重试/双失败/搜索软失败/url 溯源），全程 mock fetch，未发一次真实调用
+- `next start` 实测 400/413 开流前拦截 ✅；ui-test 锚点 grep 复核无损 ✅
+- 真实模型行为未测（按任务书留给监工跑 diag-test.mjs，注意该步现在最多花 3 次搜索配额）
+
+开发记录：`F:\——文章撰写——\火山\seed-dev\开发记录-诊断深度化.md`（含设计理由、502 与 SSE 的取舍说明、遗留风险）。
+
+一个环境遗留：`npm run lint` 在本机因 node_modules 预装损坏（object.fromentries 依赖树缺文件）启动即崩，与本次代码无关，记录中已注明。

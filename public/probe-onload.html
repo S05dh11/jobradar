@@ -1,0 +1,23 @@
+<!doctype html>
+<meta charset="utf-8">
+<body style="margin:0;background:#05080f">
+<div id="a" style="position:absolute;inset:0"></div>
+<div id="tag" style="position:fixed;left:8px;top:8px;z-index:9;color:#22d3ee;font:12px monospace">bootstrapping…</div>
+<script>
+  // 探针 A:复刻应用当前引导方式——script onload 后立刻 new AMap.Map
+  var s = document.createElement("script");
+  s.src = "https://webapi.amap.com/maps?v=2.0&key=your-amap-key";
+  s.onload = function () {
+    try {
+      new AMap.Map(document.getElementById("a"), {
+        center: [120.15, 30.28], zoom: 10,
+        mapStyle: "amap://styles/darkblue", viewMode: "2D", resizeEnable: true,
+      });
+      document.getElementById("tag").textContent = "onload path: new AMap.Map() done";
+    } catch (e) {
+      document.getElementById("tag").textContent = "onload path THREW: " + e.message;
+    }
+  };
+  s.onerror = function () { document.getElementById("tag").textContent = "script onerror"; };
+  document.head.appendChild(s);
+</script>

@@ -1,0 +1,43 @@
+<!doctype html>
+<meta charset="utf-8">
+<body style="margin:0;background:#05080f">
+<div id="a" style="position:absolute;inset:0"></div>
+<div id="tag" style="position:fixed;left:8px;top:8px;z-index:9;color:#22d3ee;font:12px monospace">bootstrapping…</div>
+<script>
+  // 探针 D:同一时序,但 setZoomAndCenter 参数顺序正确(zoom 在前)
+  var tag = document.getElementById("tag");
+  var s = document.createElement("script");
+  s.src = "https://webapi.amap.com/maps?v=2.0&key=your-amap-key";
+  s.onload = function () {
+    var map;
+    try {
+      map = new AMap.Map(document.getElementById("a"), {
+        center: [108.5, 34.5], zoom: 4,
+        mapStyle: "amap://styles/darkblue", viewMode: "2D", resizeEnable: true,
+      });
+      tag.textContent = "map created (zoom 4)";
+    } catch (e) { tag.textContent = "new Map THREW: " + e.message; return; }
+    setTimeout(function () {
+      try {
+        map.setZoomAndCenter(7, [120.15, 30.28], false, 800);
+        tag.textContent += " | correct-call returned ok";
+      } catch (e) {
+        tag.textContent += " | correct-call THREW: " + e.message;
+      }
+    }, 3000);
+    setTimeout(function () {
+      try {
+        var m = new AMap.Marker({
+          position: [120.15, 30.28],
+          content: '<div style="width:14px;height:14px;border-radius:50%;background:#22d3ee"></div>',
+          offset: new AMap.Pixel(-7, -7),
+        });
+        map.add(m);
+        tag.textContent += " | marker added";
+      } catch (e) {
+        tag.textContent += " | marker THREW: " + e.message;
+      }
+    }, 4500);
+  };
+  document.head.appendChild(s);
+</script>

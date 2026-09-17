@@ -1,0 +1,27 @@
+"doubao-seed-evolving" is not a model this version of Claude Code recognizes, so auto-compact will keep this session within 200k tokens (the context window it assumes). If the model accepts more, append [1m] to the model name for 1M, or set CLAUDE_CODE_MAX_CONTEXT_TOKENS to its real window; to make it recognized, map it in the modelOverrides setting or update Claude Code; CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT=1 restores the previous wait-for-the-API behavior.
+[claude-code:unrecognized_model] {"model":"doubao-seed-evolving","query_source":"sdk"}
+全部完成。总结：
+
+## 交付内容
+
+**生产改动仅 1 个文件**：`app/page.tsx`（纯新增 ~95 行，零改动既有节点，诊断相关代码一行未碰）
+
+- `jobsToMarkdown()`：纯函数拼 8 列 Markdown 表格（公司/岗位/城市/薪资/硬性要求/核心技能/可信度/来源URL），字段对齐 `export-jobs.mjs`，数组用「、」连接，缺省写「-」，单元格内 `|` 转义防破表
+- `copyText()`：Clipboard API → 离屏 textarea + execCommand → 全失败返回 false
+- `CopyJobsButton`：成功显「已复制 N 个岗位」2 秒复原（连点重置定时器、卸载清理），失败 alert 提示手动选择
+- 位置：报告页统计仪表条正下方右对齐工具行；数据源是 state 全量 `props.jobs`，**不受分类 tab 过滤影响**，不重新请求
+- 样式复用 `btn-primary`，与「再来一次」同规格，零新增 CSS
+
+## 验收结果
+
+1. **`npm run build` 通过**（Turbopack 编译 + TS 严格检查 + 5 路由生成）
+2. **零模型调用/零搜索配额**：CDP 驱动 headless Edge 在 `/dev-report` 临时夹具上跑了 **27 项断言全过**——真实调用原生 writeText（spy 透传捕获入参）、表格内容/缺省/转义、反馈与 2s 复原、tab 过滤后仍复制全量 11 条、execCommand 兜底选路与内容、三级 alert、全部 ui-test 锚点（技能要求词频/📍/必须:/高中低可信/article/border-cyan/开始调研）原样。临时夹具、临时 export、临时脚本均已回滚删除
+3. **开发记录**已写入 `F:\——文章撰写——\火山\seed-dev\开发记录-复制按钮.md`
+
+## 一个设计决策（已记入记录）
+
+可信度列输出中文「高可信/中可信/低可信」（与页面徽章一致），而非 export 脚本里的 high/medium/low 原始值——产物面向文档粘贴，"字段对齐"按字段集合理解。若你希望严格用原始英文值，改一行即可。
+
+## 遗留
+
+`npm run lint` 因 node_modules 里 `object.fromentries` 嵌套的 es-abstract 截断安装（缺 `IsArray.js`）启动即崩，是既有环境问题、与本次改动无关，未擅自重装依赖。
