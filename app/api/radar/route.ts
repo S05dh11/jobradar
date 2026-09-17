@@ -9,7 +9,7 @@ import type { AgentEvent } from "../../lib/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const TIMEOUT_MS = 15 * 60 * 1000; // 单次调研最长 15 分钟
+const TIMEOUT_MS = 25 * 60 * 1000; // 单次调研最长 25 分钟
 
 export async function POST(req: Request) {
   let body: { categories?: unknown; cities?: unknown; jobType?: unknown };

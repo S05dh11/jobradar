@@ -46,39 +46,104 @@ export function getArkKey(): string {
 
 // 无工具的收尾重问必须把 tools 整个省略(而不是传空数组):
 // 诊断段 3 靠它在协议层封死模型再次发起 function calling 的可能
+// 429(RequestBurstTooFast)/5xx 自动指数退避重试:方舟 Agent Plan 对新 Key/低水位
+// Key 有突发流量保护,实测退避 41s 仍会 429,窗口在分钟级 —— 退避拉长到最长 90s
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const BACKOFF_MS = [5000, 15000, 30000, 60000, 90000];
+// 单次请求硬超时:防止非流式调用因模型超长思考/连接挂起而吃光整场调研的预算;
+// 超时按可重试错误处理,退避后换一次尝试
+const ATTEMPT_TIMEOUT_MS = 150_000;
+
+// 全局节流:两次模型请求至少间隔 CHAT_MIN_INTERVAL_MS。Agent 循环里模型调用最密
+// (每轮 1 次,秒级连发),把速率拉平到恒定低速,从源头避免触发增速风控
+const CHAT_MIN_INTERVAL_MS = 2500;
+let chatPaceChain: Promise<unknown> = Promise.resolve();
+let lastChatAt = 0;
+
+async function chatPacedSlot(): Promise<void> {
+  const run = chatPaceChain.then(async () => {
+    const wait = lastChatAt + CHAT_MIN_INTERVAL_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastChatAt = Date.now();
+  });
+  chatPaceChain = run.catch(() => {});
+  await run;
+}
+
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(t);
+      reject(new DOMException("Aborted", "AbortError"));
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export async function chatCompletion(
   messages: ChatMessage[],
   tools: ToolDef[],
   signal?: AbortSignal
 ): Promise<ChatResult> {
-  const res = await fetch(`${ARK_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${getArkKey()}`,
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages,
-      ...(tools.length > 0 ? { tools, tool_choice: "auto" } : {}),
-      temperature: 0.2,
-    }),
-    signal,
+  const body = JSON.stringify({
+    model: MODEL,
+    messages,
+    ...(tools.length > 0 ? { tools, tool_choice: "auto" } : {}),
+    temperature: 0.2,
   });
-
-  if (!res.ok) {
-    const detail = (await res.text()).slice(0, 300);
-    throw new Error(`模型接口 ${res.status}: ${detail}`);
-  }
-
-  const data = await res.json();
-  const message = data?.choices?.[0]?.message;
-  return {
-    content: typeof message?.content === "string" ? message.content : "",
-    toolCalls: Array.isArray(message?.tool_calls)
-      ? message.tool_calls.map(parseToolCall)
-      : [],
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${getArkKey()}`,
   };
+
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt++) {
+    await chatPacedSlot();
+    if (attempt > 0) await sleep(BACKOFF_MS[attempt - 1], signal);
+    let res: Response;
+    try {
+      res = await fetch(`${ARK_BASE}/chat/completions`, {
+        method: "POST",
+        headers,
+        body,
+        // 外部 signal(断连/总超时)与单次硬超时合并:任一触发即中止本次尝试
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(ATTEMPT_TIMEOUT_MS)]) : AbortSignal.timeout(ATTEMPT_TIMEOUT_MS),
+      });
+    } catch (e: any) {
+      if (String(e?.name) === "AbortError" && signal?.aborted) throw e; // 总超时/断连:上抛
+      if (String(e?.name) === "TimeoutError") {
+        lastError = new Error(`模型请求 ${(ATTEMPT_TIMEOUT_MS / 1000) | 0}s 无响应(可能被限流静默挂起)`);
+        continue; // 视为可重试
+      }
+      lastError = e instanceof Error ? e : new Error(String(e));
+      continue;
+    }
+
+    if (!res.ok) {
+      const detail = (await res.text()).slice(0, 300);
+      lastError = new Error(`模型接口 ${res.status}: ${detail}`);
+      if (RETRYABLE_STATUS.has(res.status)) continue;
+      throw lastError;
+    }
+
+    const data = await res.json();
+    const message = data?.choices?.[0]?.message;
+    return {
+      content: typeof message?.content === "string" ? message.content : "",
+      toolCalls: Array.isArray(message?.tool_calls)
+        ? message.tool_calls.map(parseToolCall)
+        : [],
+    };
+  }
+  throw lastError ?? new Error("模型接口调用失败");
 }
 
 function parseToolCall(raw: any): ToolCall {

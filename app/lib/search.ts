@@ -4,10 +4,29 @@
 // 两层都必须认,否则接口一切换整份调研就空(踩过的坑)
 // 返回项里的 AuthInfoLevel(权威性等级)是岗位可信度徽章的参考输入
 
-import { getArkKey } from "./ark";
+import { getArkKey, sleep } from "./ark";
 import type { SearchResult } from "./types";
 
 const ENDPOINT = "https://open.feedcoopapi.com/search_api/web_search";
+
+// 全局节流:两次搜索至少间隔 MIN_INTERVAL_MS。Agent 开局常在数秒内连发多个类别的
+// 搜索,叠加模型调用易触发方舟突发保护(RequestBurstTooFast),拉开间隔从源头减压
+const MIN_INTERVAL_MS = 2000;
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const BACKOFF_MS = [3000, 6000, 12000];
+
+let paceChain: Promise<unknown> = Promise.resolve();
+let lastSearchAt = 0;
+
+async function pacedSlot(): Promise<void> {
+  const run = paceChain.then(async () => {
+    const wait = lastSearchAt + MIN_INTERVAL_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastSearchAt = Date.now();
+  });
+  paceChain = run.catch(() => {});
+  await run;
+}
 
 export interface SearchOptions {
   count?: number;
@@ -34,23 +53,41 @@ export async function doubaoSearch(
     QueryControl: { QueryRewrite: true },
   };
 
-  const res = await fetch(ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${getArkKey()}`,
-    },
-    body: JSON.stringify(body),
-    signal: opts.signal,
-  });
+  const payload = JSON.stringify(body);
+  const headers = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${getArkKey()}`,
+  };
 
-  if (!res.ok) {
-    const detail = (await res.text()).slice(0, 300);
-    throw new Error(`豆包搜索失败 ${res.status}: ${detail}`);
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt++) {
+    await pacedSlot();
+    if (attempt > 0) await sleep(BACKOFF_MS[attempt - 1], opts.signal);
+    let res: Response;
+    try {
+      res = await fetch(ENDPOINT, {
+        method: "POST",
+        headers,
+        body: payload,
+        signal: opts.signal,
+      });
+    } catch (e: any) {
+      if (String(e?.name) === "AbortError") throw e;
+      lastError = e instanceof Error ? e : new Error(String(e));
+      continue;
+    }
+
+    if (!res.ok) {
+      const detail = (await res.text()).slice(0, 300);
+      lastError = new Error(`豆包搜索失败 ${res.status}: ${detail}`);
+      if (RETRYABLE_STATUS.has(res.status)) continue;
+      throw lastError;
+    }
+
+    const data = await res.json();
+    return normalizeResults(data);
   }
-
-  const data = await res.json();
-  return normalizeResults(data);
+  throw lastError ?? new Error("豆包搜索失败");
 }
 
 // 结果数组定位:新结构 Result.WebResults 优先,旧文档 Results 及常见变体兜底

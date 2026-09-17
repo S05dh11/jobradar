@@ -269,7 +269,11 @@ export async function runRadarAgent(
 
   try {
     for (let iter = 0; iter < MAX_ITERATIONS && !state.finished; iter++) {
+      const iterStart = Date.now();
       const res = await chatCompletion(messages, TOOL_DEFS, signal);
+      console.log(
+        `[agent] iter=${iter + 1}/${MAX_ITERATIONS} 模型${((Date.now() - iterStart) / 1000).toFixed(1)}s tools=${res.toolCalls.length} 搜=${state.searchCount} 抓=${state.fetchCount} 岗=${state.jobs.length}`
+      );
       const text = res.content.trim();
 
       // 模型不调工具:有正文当作计划/收尾独白推给前端,空回复直接结束
