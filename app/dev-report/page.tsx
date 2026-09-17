@@ -5,8 +5,8 @@
 // 公司名为公开知名公司(仅供地图定位用),岗位数据全部虚构。
 
 import JobMap from "../JobMap";
-import { ResumeDiagnose } from "../page";
-import type { JobRecord } from "../lib/types";
+import { ReportView, ResumeDiagnose } from "../page";
+import type { JobRecord, RadarReport } from "../lib/types";
 
 const FAKE_JOBS: JobRecord[] = [
   {
@@ -122,6 +122,22 @@ const FAKE_JOBS: JobRecord[] = [
 ];
 
 export default function DevReportPage() {
+  // 假报告:覆盖小结/技能词频/统计字段,用于验证报告面板与导出功能
+  const FAKE_REPORT: RadarReport = {
+    jobs: FAKE_JOBS,
+    skillRanking: [
+      { skill: "Java", count: 4 },
+      { skill: "Python", count: 3 },
+      { skill: "Redis", count: 3 },
+      { skill: "MySQL", count: 3 },
+      { skill: "Kubernetes", count: 2 },
+    ],
+    searchCount: 12,
+    fetchCount: 7,
+    cityCoverage: ["北京", "杭州", "深圳", "上海"],
+    summary:
+      "本次调研共覆盖 4 城 10 个岗位。后端以 Java/Go 为主流技术栈,大模型应用开发岗位集中在杭州;云原生与微服务经验是普遍硬性要求。",
+  };
   return (
     <div
       className="min-h-screen p-6"
@@ -134,6 +150,14 @@ export default function DevReportPage() {
             假数据(10 岗位 / 5 城),仅用于零配额 UI 与截图验证;不进文章、不进生产
           </p>
         </header>
+
+        <ReportView
+          report={FAKE_REPORT}
+          jobs={FAKE_JOBS}
+          activeCat="全部"
+          setActiveCat={() => {}}
+          onRestart={() => {}}
+        />
 
         <section className="panel p-5">
           <h2 className="mb-3 text-sm font-semibold text-cyan-300">岗位分布地图(双视图)</h2>

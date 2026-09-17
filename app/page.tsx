@@ -647,7 +647,137 @@ function CopyJobsButton({ jobs }: { jobs: JobRecord[] }) {
   );
 }
 
-function ReportView(props: {
+// ---------- 导出报告文件(纯前端 Blob 下载:Markdown / CSV / JSON,零后端) ----------
+
+function DownloadIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M4 19h16" />
+    </svg>
+  );
+}
+
+// 生成 Blob 并触发浏览器下载,用完立即 revoke 释放
+function downloadFile(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// 文件名时间戳:20260917-1215
+function exportStamp(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+// CSV 单元格:压平换行;含逗号/引号时套引号并转义内部引号
+function csvCell(v: string | null | undefined): string {
+  const s = (v ?? "").trim().replace(/\r?\n/g, " ");
+  return /[",]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// 列与 Markdown 表格对齐,另补工作地点/来源站点/发布时间;头部 BOM 保证 Excel 直开不乱码
+function jobsToCsv(jobs: JobRecord[]): string {
+  const header = ["公司", "岗位", "城市", "薪资", "工作地点", "硬性要求", "核心技能", "可信度", "来源站点", "发布时间", "来源URL"];
+  const rows = jobs.map((j) =>
+    [
+      j.company,
+      j.title,
+      j.city,
+      j.salary,
+      j.location,
+      j.requirements?.join("、"),
+      j.skills.join("、"),
+      CREDIBILITY_LABEL[j.credibility] ?? j.credibility,
+      j.sourceName,
+      j.publishedAt,
+      j.sourceUrl,
+    ]
+      .map(csvCell)
+      .join(",")
+  );
+  return "\uFEFF" + [header.join(","), ...rows].join("\r\n");
+}
+
+// 完整 Markdown 报告:统计头 + 小结 + 技能词频表 + 岗位明细表(复用 jobsToMarkdown)
+function reportToMarkdown(report: RadarReport, jobs: JobRecord[]): string {
+  const lines = [
+    "# 岗位雷达调研报告",
+    "",
+    `- 生成时间:${new Date().toLocaleString("zh-CN")}`,
+    `- 搜索 ${report.searchCount} 次 · 抓取 ${report.fetchCount} 页 · 覆盖城市:${report.cityCoverage.join("、") || "-"} · 岗位 ${jobs.length} 条`,
+    "",
+    "## Agent 调研小结",
+    "",
+    report.summary.trim() || "-",
+    "",
+  ];
+  if (report.skillRanking.length > 0) {
+    lines.push(`## 技能要求词频 TOP${report.skillRanking.length}`, "", "| 技能 | 次数 |", "| --- | --- |");
+    for (const s of report.skillRanking) lines.push(`| ${mdCell(s.skill)} | ${s.count} |`);
+    lines.push("");
+  }
+  lines.push(`## 岗位明细(${jobs.length} 条,来源链接可逐条验证)`, "", jobsToMarkdown(jobs), "");
+  return lines.join("\n");
+}
+
+// 导出按钮组:与「复制岗位表格」并排;始终导出全部岗位(不受明细区类别筛选影响)
+function ExportGroup({ report, jobs }: { report: RadarReport; jobs: JobRecord[] }) {
+  const base = `岗位雷达报告-${exportStamp()}`;
+  const items = [
+    {
+      label: "Markdown",
+      title: "完整报告(小结+技能词频+岗位表格),适合笔记/文档",
+      filename: `${base}.md`,
+      mime: "text/markdown;charset=utf-8",
+      build: () => reportToMarkdown(report, jobs),
+    },
+    {
+      label: "CSV",
+      title: "岗位表格,Excel/WPS 可直接打开(含 BOM 不乱码)",
+      filename: `${base}.csv`,
+      mime: "text/csv;charset=utf-8",
+      build: () => jobsToCsv(jobs),
+    },
+    {
+      label: "JSON",
+      title: "完整结构化数据,便于程序二次处理",
+      filename: `${base}.json`,
+      mime: "application/json;charset=utf-8",
+      build: () => JSON.stringify({ generatedAt: new Date().toISOString(), ...report, jobs }, null, 2),
+    },
+  ];
+  return (
+    <div className="flex items-center overflow-hidden rounded-[4px] border border-white/10" role="group" aria-label="导出报告文件">
+      <span className="flex items-center gap-1 border-r border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-ink-dim">
+        <DownloadIcon />
+        导出
+      </span>
+      {items.map((it) => (
+        <button
+          key={it.label}
+          title={it.title}
+          onClick={() => downloadFile(it.filename, it.build(), it.mime)}
+          className="border-r border-white/10 px-3 py-1.5 text-xs text-ink-mid transition-colors last:border-r-0 hover:bg-white/[0.04] hover:text-cyan-300"
+        >
+          {it.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// 导出组件供 /dev-report 夹具页复用(零配额 UI 验证)
+export function ReportView(props: {
   report: RadarReport;
   jobs: JobRecord[];
   activeCat: string;
@@ -685,8 +815,9 @@ function ReportView(props: {
         ))}
       </div>
 
-      {/* 工具区:一键复制 Markdown 表格(纯前端,数据为当前 state 里的全部岗位,不重新请求) */}
+      {/* 工具区:复制 Markdown 表格 + 导出文件(纯前端,数据为当前 state 里的全部岗位,不重新请求) */}
       <div className="flex flex-wrap items-center justify-end gap-2">
+        <ExportGroup report={report} jobs={props.jobs} />
         <CopyJobsButton jobs={props.jobs} />
       </div>
 
