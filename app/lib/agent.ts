@@ -3,7 +3,7 @@
 // 红线:岗位只允许来自工具返回,sourceUrl 全程可追溯;断连/超时也要兜住已登记的数据。
 
 import { chatCompletion, type ChatMessage, type ToolCall, type ToolDef } from "./ark";
-import { chatAnthropic } from "./ark-anthropic";
+import { doubaoSearch } from "./search";
 import { fetchPage } from "./fetch-page";
 import {
   MAX_FETCHES,
@@ -28,7 +28,7 @@ export interface RadarParams {
 const SYSTEM_PROMPT = `你是 JobRadar(岗位雷达)的调研 Agent,任务是:针对用户选定的岗位类别和城市,通过联网搜索和网页抓取,收集真实在招岗位信息,输出一份可逐条溯源验证的岗位报告。
 
 你的工具:
-- 联网搜索:内置能力,想到就搜、自动执行,无需调用工具(次数有硬上限,合理规划搜索词);你看到的搜索结果链接就是可引用的来源
+- search_jobs:联网搜索招聘信息,返回结果列表(标题、URL、摘要、来源站、发布时间、权威性等级)
 - fetch_page:抓取网页正文,读取具体 JD 的薪资、技能要求等细节
 - record_job:把核实过的岗位登记进报告
 - finish:调研完成,输出小结
@@ -124,6 +124,30 @@ function buildUserPrompt(params: RadarParams, budget: Budget): string {
 // ---------- 工具定义(OpenAI function calling) ----------
 
 const TOOL_DEFS: ToolDef[] = [
+  {
+    type: "function",
+    function: {
+      name: "search_jobs",
+      description:
+        "联网搜索招聘岗位。一次搜索覆盖「一个城市 + 一类岗位/技能方向」,返回结果列表(标题、URL、摘要、来源站、发布时间、权威性等级)。",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "搜索词,格式如「杭州 后端工程师 招聘」「深圳 大模型算法 招聘」",
+          },
+          timeRange: {
+            type: "string",
+            enum: ["OneDay", "OneWeek", "OneMonth", "OneYear"],
+            description: "时间范围,默认 OneMonth(近 30 天)",
+          },
+          count: { type: "integer", description: "返回条数 5-10,默认 10" },
+        },
+        required: ["query"],
+      },
+    },
+  },
   {
     type: "function",
     function: {
@@ -275,37 +299,15 @@ export async function runRadarAgent(
     { role: "user", content: buildUserPrompt(params, budget) },
   ];
 
-  // 服务端 web_search 的配对与白名单:tool_use_id → 搜索词;搜索真实返回过的 URL 进白名单
-  const pendingQueries = new Map<string, string>();
-  const knownUrls = new Set<string>();
-
   let truncated = false;
 
   try {
     for (let iter = 0; iter < MAX_ITERATIONS && !state.finished; iter++) {
       compactHistory(messages); // 先给历史瘦身,再发起本轮调用
       const iterStart = Date.now();
-      const res = await chatAnthropic(messages, {
-        system: SYSTEM_PROMPT,
-        tools: TOOL_DEFS,
-        webSearchMaxUses: budget.maxSearches,
-        signal,
-        onNote: (text) => onEvent({ type: "note", text }),
-        onSearchStart: (id, query) => pendingQueries.set(id, query),
-        onSearchResults: (id, results) => {
-          const query = pendingQueries.get(id) ?? "联网搜索";
-          pendingQueries.delete(id);
-          state.searchCount++;
-          onEvent({
-            type: "search",
-            query,
-            timeRange: "OneMonth",
-            count: results.length,
-            results: results.map((r) => ({ title: r.title, url: r.url, snippet: "", siteName: hostOf(r.url) })),
-          });
-          for (const r of results) knownUrls.add(r.url);
-        },
-      });
+      const res = await chatCompletion(messages, TOOL_DEFS, signal, (text) =>
+        onEvent({ type: "note", text })
+      );
       console.log(
         `[agent] iter=${iter + 1}/${MAX_ITERATIONS} 模型${((Date.now() - iterStart) / 1000).toFixed(1)}s tools=${res.toolCalls.length} 搜=${state.searchCount} 抓=${state.fetchCount} 岗=${state.jobs.length}`
       );
@@ -335,7 +337,7 @@ export async function runRadarAgent(
       for (const call of res.toolCalls) {
         let toolText: string;
         try {
-          toolText = await runTool(call, { state, budget, allowedCities: params.cities, knownUrls, signal, onEvent });
+          toolText = await runTool(call, { state, budget, allowedCities: params.cities, signal, onEvent });
         } catch (e: any) {
           if (signal?.aborted) throw e; // 断连/总超时:取消整条调研
           // 单工具失败不致命:错误作为工具结果回喂,让模型换策略
@@ -378,30 +380,61 @@ interface ToolDeps {
   state: RunState;
   budget: Budget;
   allowedCities: string[];
-  knownUrls: Set<string>; // 搜索真实返回过的链接(record_job 的来源白名单)
   signal?: AbortSignal;
   onEvent: (ev: AgentEvent) => void;
-}
-
-function hostOf(u: string): string {
-  try {
-    return new URL(u).hostname;
-  } catch {
-    return "未知来源";
-  }
 }
 
 const TIME_RANGES = ["OneDay", "OneWeek", "OneMonth", "OneYear"] as const;
 type TimeRange = (typeof TIME_RANGES)[number];
 
 async function runTool(call: ToolCall, deps: ToolDeps): Promise<string> {
-  const { state, budget, allowedCities, knownUrls, signal, onEvent } = deps;
+  const { state, budget, allowedCities, signal, onEvent } = deps;
   const { name, args } = call;
 
   switch (name) {
     case "search_jobs": {
-      // 搜索已改为服务端 web_search 内置工具(见 ark-anthropic.ts),客户端不再提供搜索工具。
-      return "搜索已由系统内置能力自动执行,无需调用工具。请基于已看到的搜索结果继续登记或收尾。";
+      if (state.searchCount >= budget.maxSearches) {
+        return `搜索预算(${budget.maxSearches} 次)已用尽,请基于已有结果登记岗位并调用 finish 收尾。`;
+      }
+      // 攒批闸门:已搜索≥2次仍零登记 → 拒发新结果(不耗预算),逼模型先登记再继续。
+      // 防的是「搜完全部预算最后统一登记」——跑到超时被截断时兜底报告会是 0 岗。
+      if (state.jobs.length === 0 && state.searchCount >= 2) {
+        return (
+          `【纪律闸门】你已搜索 ${state.searchCount} 次但尚未登记任何岗位,本次搜索请求被拒绝(未消耗预算)。` +
+          `请立即基于已有搜索/抓取结果调用 record_job 登记已核实的岗位(可在一次回复中并行登记多个;` +
+          `正文抓不到的岗位按搜索摘要登记并标 medium 可信度)。登记之后才允许继续搜索;` +
+          `若确认已有结果全都不可登记,说明原因并调用 finish 收尾。`
+        );
+      }
+      const query = String(args.query ?? "");
+      if (!query) return "错误:缺少 query 参数";
+      const timeRange: TimeRange = TIME_RANGES.includes(String(args.timeRange) as TimeRange)
+        ? (String(args.timeRange) as TimeRange)
+        : "OneMonth";
+      const count = clamp(Number(args.count ?? 10), 5, 10);
+
+      const usedBefore = state.searchCount; // 本调用开始前的快照,剩余提示与旧行为一致
+      state.searchCount++;
+      const results = await doubaoSearch(query, { timeRange, count, signal });
+      onEvent({ type: "search", query, timeRange, count: results.length, results });
+
+      const remaining = budget.maxSearches - usedBefore;
+      const lines = results.map((r) => ({
+        title: r.title,
+        url: r.url,
+        site: r.siteName,
+        time: r.publishTime ?? "未知",
+        auth: r.authLevel ?? "未知",
+        snippet: r.snippet.slice(0, 180),
+      }));
+      return (
+        `搜索「${query}」返回 ${results.length} 条结果(搜索预算还剩 ${remaining} 次):\n` +
+        JSON.stringify(lines, null, 0) +
+        (remaining <= 2 ? "\n【注意】搜索预算即将用尽,请尽快登记已核实岗位并 finish。" : "") +
+        (state.jobs.length === 0
+          ? "\n【提醒】当前登记数为 0。下一轮优先 record_job 登记本轮已核实岗位,不要攒到搜索预算耗尽再统一登记。"
+          : "")
+      );
     }
 
     case "fetch_page": {
@@ -410,7 +443,6 @@ async function runTool(call: ToolCall, deps: ToolDeps): Promise<string> {
       }
       const url = String(args.url ?? "");
       if (!/^https?:\/\//i.test(url)) return "错误:url 必须是 http(s) 链接";
-      knownUrls.add(url); // 抓过的页面 URL 同样进入来源白名单(它必然来自搜索结果)
       state.fetchCount++;
       const page = await fetchPage(url, signal);
       onEvent({
@@ -426,15 +458,12 @@ async function runTool(call: ToolCall, deps: ToolDeps): Promise<string> {
     }
 
     case "record_job": {
-      const job = sanitizeJob(args, state.jobs, allowedCities, knownUrls);
+      const job = sanitizeJob(args, state.jobs, allowedCities);
       if (job === "dup") {
         return "该岗位与已登记岗位重复(同公司同名岗位),已跳过,请登记其他岗位。";
       }
       if (job === "city") {
         return "登记被拒:岗位城市不在用户给定的城市列表内,请只登记列表内城市的岗位。";
-      }
-      if (job === "url") {
-        return "登记被拒:来源链接不在本次搜索/抓取真实返回的结果里,严禁使用记忆里或拼凑的链接。请改用本轮搜索结果中真实出现的 URL。";
       }
       if (!job) return "登记失败:信息不完整(必须含 title/company/city/sourceUrl)";
       state.jobs.push(job);
@@ -455,13 +484,12 @@ async function runTool(call: ToolCall, deps: ToolDeps): Promise<string> {
 
 // ---------- 岗位登记清洗 ----------
 
-type RejectReason = "dup" | "city" | "url";
+type RejectReason = "dup" | "city";
 
 function sanitizeJob(
   raw: Record<string, unknown>,
   existing: JobRecord[],
-  allowedCities: string[],
-  knownUrls: Set<string>
+  allowedCities: string[]
 ): JobRecord | RejectReason | null {
   const title = String(raw.title ?? "").trim().slice(0, 120);
   const company = String(raw.company ?? "").trim().slice(0, 120);
@@ -472,9 +500,6 @@ function sanitizeJob(
 
   // 城市白名单是服务端硬校验,不靠提示词自觉
   if (!allowedCities.some((c) => city.includes(c))) return "city";
-
-  // 来源白名单:sourceUrl 必须是搜索/抓取真实返回过的链接,编造的一律打回
-  if (!knownUrls.has(sourceUrl)) return "url";
 
   // 同名岗位且(同来源页或同公司)视为重复;同一列表页里的不同岗位可分别登记
   const isDup = existing.some(
