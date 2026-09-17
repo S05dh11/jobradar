@@ -96,12 +96,12 @@ export const JOB_TYPES = [
 export type JobType = (typeof JOB_TYPES)[number]["value"];
 
 // 单次调研硬预算(防模型失控拖垮时间与配额)
-export const MAX_ITERATIONS = 30; // agent 最多 30 轮(每轮一次模型调用)
-export const MAX_SEARCHES = 18; // 最多 18 次搜索
-export const MAX_FETCHES = 12; // 最多抓取 12 页
-export const TARGET_JOBS_MIN = 18; // 目标岗位数下限
+export const MAX_ITERATIONS = 42; // agent 最多 42 轮(每轮一次模型调用)
+export const MAX_SEARCHES = 36; // 最多 36 次搜索(全量时一城一搜)
+export const MAX_FETCHES = 20; // 最多抓取 20 页
+export const TARGET_JOBS_MIN = 30; // 目标岗位数下限
 // 上限即收尾线:达到后模型应调用 finish,不等预算用尽
-export const TARGET_JOBS_MAX = 30; // 目标岗位数上限(达到即建议收尾)
+export const TARGET_JOBS_MAX = 50; // 目标岗位数上限(达到即建议收尾)
 
 // 可信度徽章的文案与配色(前后端共用 key)
 export const CREDIBILITY_LABEL: Record<string, string> = {

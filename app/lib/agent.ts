@@ -47,6 +47,7 @@ const SYSTEM_PROMPT = `你是 JobRadar(岗位雷达)的调研 Agent,任务是:�
 - 默认时间范围 OneMonth(近 30 天),确保时效性。
 - 搜索时看摘要和来源站质量:官方招聘站/公司官网/直招平台优先;明显过期或与岗位无关的结果跳过。
 - 对信息不全但有价值的链接(摘要缺薪资或技能),fetch_page 抓取正文核实;一次抓取可从中登记 1-3 个岗位。
+- 一次搜索返回的多条结果,凡岗位、公司、来源可核实的都应登记,不要只挑一个;同一列表页/来源页里的不同公司、不同岗位可分别登记(不算重复)。
 - 已登记的岗位不要重复登记。
 
 【执行节奏——严禁攒着不登记,违反即失败】
@@ -75,7 +76,7 @@ interface Budget {
 }
 
 // 预算随「类别 × 城市」组合数缩放,防小范围调研被无限拖长:
-// 满量 5×20=100 组合时恰好贴住全局上限(18 搜 / 12 抓 / 18-30 岗);
+// 满量组合时贴住全局上限(36 搜 / 20 抓 / 30-50 岗);
 // 单组合缩到 4 搜 / 2 抓 / 3-6 岗,约 3-4 分钟出报告。
 function dynamicBudget(params: RadarParams): Budget {
   const combos = Math.max(1, params.categories.length * params.cities.length);
@@ -420,7 +421,7 @@ async function runTool(call: ToolCall, deps: ToolDeps): Promise<string> {
     case "record_job": {
       const job = sanitizeJob(args, state.jobs, allowedCities);
       if (job === "dup") {
-        return "该岗位与已登记岗位重复(同 URL 或同公司同名岗位),已跳过,请登记其他岗位。";
+        return "该岗位与已登记岗位重复(同公司同名岗位),已跳过,请登记其他岗位。";
       }
       if (job === "city") {
         return "登记被拒:岗位城市不在用户给定的城市列表内,请只登记列表内城市的岗位。";
@@ -461,9 +462,9 @@ function sanitizeJob(
   // 城市白名单是服务端硬校验,不靠提示词自觉
   if (!allowedCities.some((c) => city.includes(c))) return "city";
 
-  // 同 URL 或同公司同岗位名视为重复
+  // 同名岗位且(同来源页或同公司)视为重复;同一列表页里的不同岗位可分别登记
   const isDup = existing.some(
-    (j) => j.sourceUrl === sourceUrl || (j.company === company && j.title === title)
+    (j) => j.title === title && (j.sourceUrl === sourceUrl || j.company === company)
   );
   if (isDup) return "dup";
 
