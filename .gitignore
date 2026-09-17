@@ -49,3 +49,8 @@ next-env.d.ts
 dev.log
 # seed-dev 会话配置含真实 Key,仓库里只放脱敏模板
 seed-dev/.claude/settings.json
+
+# 验证产物(本地证据,不进 git)
+verify-light-run*.log
+dev-server.log
+body-verify-light.json
