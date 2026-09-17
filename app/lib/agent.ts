@@ -257,6 +257,27 @@ interface RunState {
   finished: boolean;
 }
 
+// ---------- 历史压缩:旧轮次的大块工具结果瘦身,防上下文滚雪球撞 token 限流 ----------
+// 保留最近 KEEP_RECENT_TOOLS 条 tool 消息原样;更早的搜索回执/抓取正文截断。
+// 岗位一经登记,数据落在服务端 state,不依赖对话里留全文。
+const KEEP_RECENT_TOOLS = 6;
+const SEARCH_TOOL_KEEP = 600; // 旧搜索回执保留前 600 字(够盖住前几条结果的 URL)
+const FETCH_TOOL_KEEP = 400;
+
+function compactHistory(messages: ChatMessage[]): void {
+  const toolIdx = messages.map((m, i) => (m.role === "tool" ? i : -1)).filter((i) => i >= 0);
+  const oldIdx = new Set(toolIdx.slice(0, Math.max(0, toolIdx.length - KEEP_RECENT_TOOLS)));
+  for (const i of oldIdx) {
+    const c = messages[i].content;
+    if (typeof c !== "string" || c.length < 1000) continue; // 短回执(登记/预算/闸门提示)不动
+    if (c.startsWith("页面「")) {
+      messages[i].content = c.slice(0, FETCH_TOOL_KEEP) + "\n…(历史抓取正文已省略,可登记岗位已登记)";
+    } else if (c.includes("条结果")) {
+      messages[i].content = c.slice(0, SEARCH_TOOL_KEEP) + "\n…(较早的搜索结果已省略,勿重复搜索;如需补登记请基于最近结果)";
+    }
+  }
+}
+
 // ---------- 主循环 ----------
 
 export async function runRadarAgent(
@@ -282,6 +303,7 @@ export async function runRadarAgent(
 
   try {
     for (let iter = 0; iter < MAX_ITERATIONS && !state.finished; iter++) {
+      compactHistory(messages); // 先给历史瘦身,再发起本轮调用
       const iterStart = Date.now();
       const res = await chatCompletion(messages, TOOL_DEFS, signal, (text) =>
         onEvent({ type: "note", text })
@@ -326,12 +348,15 @@ export async function runRadarAgent(
       }
     }
   } catch (e: any) {
-    // 中止时若已有登记岗位,兜底出报告:超时丢数据是修过的缺陷,不能复活
-    if (!(signal?.aborted) || state.jobs.length === 0) throw e;
+    // 已有登记岗位时,中止/接口错误都兜底出报告:跑一半的活不白干,也不能装完整
+    if (state.jobs.length === 0) throw e;
     truncated = true;
+    if (!signal?.aborted) {
+      state.summary = `调研因接口错误提前终止(${String(e?.message ?? e).slice(0, 120)})。`;
+    }
   }
 
-  if (truncated) {
+  if (truncated && !state.summary) {
     state.summary = `调研被中途截断(超时或连接断开),已收集 ${state.jobs.length} 个真实在招岗位,覆盖 ${buildCityCoverage(params.cities, state.jobs).length} 个城市,详见报告。`;
   } else if (!state.summary && state.jobs.length > 0) {
     state.summary = `共收集 ${state.jobs.length} 个真实在招岗位,详见报告。`;

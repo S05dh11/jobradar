@@ -57,12 +57,14 @@ const ATTEMPT_TIMEOUT_MS = 150_000;
 // 全局节流:两次模型请求至少间隔 CHAT_MIN_INTERVAL_MS。Agent 循环里模型调用最密
 // (每轮 1 次,秒级连发),把速率拉平到恒定低速,从源头避免触发增速风控
 const CHAT_MIN_INTERVAL_MS = 2500;
+// 自适应节流:撞限流把间隔翻倍(上限 20s),成功后逐步回落到基础间隔
+let chatInterval = CHAT_MIN_INTERVAL_MS;
 let chatPaceChain: Promise<unknown> = Promise.resolve();
 let lastChatAt = 0;
 
 async function chatPacedSlot(): Promise<void> {
   const run = chatPaceChain.then(async () => {
-    const wait = lastChatAt + CHAT_MIN_INTERVAL_MS - Date.now();
+    const wait = lastChatAt + chatInterval - Date.now();
     if (wait > 0) await sleep(wait);
     lastChatAt = Date.now();
   });
@@ -109,6 +111,7 @@ export async function chatCompletion(
   for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt++) {
     await chatPacedSlot();
     if (attempt > 0) {
+      chatInterval = Math.min(chatInterval * 2, 20_000); // 上一次尝试失败:整体放慢节奏
       onNote?.(`模型接口限流/超时,退避 ${Math.round(BACKOFF_MS[attempt - 1] / 1000)}s 后第 ${attempt + 1} 次尝试`);
       await sleep(BACKOFF_MS[attempt - 1], signal);
     }
@@ -139,6 +142,7 @@ export async function chatCompletion(
     }
 
     const data = await res.json();
+    chatInterval = Math.max(CHAT_MIN_INTERVAL_MS, Math.round(chatInterval * 0.7)); // 成功:节奏回落
     const message = data?.choices?.[0]?.message;
     return {
       content: typeof message?.content === "string" ? message.content : "",
