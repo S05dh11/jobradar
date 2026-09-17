@@ -352,6 +352,16 @@ async function runTool(call: ToolCall, deps: ToolDeps): Promise<string> {
       if (state.searchCount >= budget.maxSearches) {
         return `搜索预算(${budget.maxSearches} 次)已用尽,请基于已有结果登记岗位并调用 finish 收尾。`;
       }
+      // 攒批闸门:已搜索≥2次仍零登记 → 拒发新结果(不耗预算),逼模型先登记再继续。
+      // 防的是「搜完全部预算最后统一登记」——跑到超时被截断时兜底报告会是 0 岗。
+      if (state.jobs.length === 0 && state.searchCount >= 2) {
+        return (
+          `【纪律闸门】你已搜索 ${state.searchCount} 次但尚未登记任何岗位,本次搜索请求被拒绝(未消耗预算)。` +
+          `请立即基于已有搜索/抓取结果调用 record_job 登记已核实的岗位(可在一次回复中并行登记多个;` +
+          `正文抓不到的岗位按搜索摘要登记并标 medium 可信度)。登记之后才允许继续搜索;` +
+          `若确认已有结果全都不可登记,说明原因并调用 finish 收尾。`
+        );
+      }
       const query = String(args.query ?? "");
       if (!query) return "错误:缺少 query 参数";
       const timeRange: TimeRange = TIME_RANGES.includes(String(args.timeRange) as TimeRange)
@@ -376,7 +386,10 @@ async function runTool(call: ToolCall, deps: ToolDeps): Promise<string> {
       return (
         `搜索「${query}」返回 ${results.length} 条结果(搜索预算还剩 ${remaining} 次):\n` +
         JSON.stringify(lines, null, 0) +
-        (remaining <= 2 ? "\n【注意】搜索预算即将用尽,请尽快登记已核实岗位并 finish。" : "")
+        (remaining <= 2 ? "\n【注意】搜索预算即将用尽,请尽快登记已核实岗位并 finish。" : "") +
+        (state.jobs.length === 0
+          ? "\n【提醒】当前登记数为 0。下一轮优先 record_job 登记本轮已核实岗位,不要攒到搜索预算耗尽再统一登记。"
+          : "")
       );
     }
 
